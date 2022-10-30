@@ -21,9 +21,11 @@ block32k_erase=0x52
 block64k_erase=0xd8
 chip_erase=0x60
 reset_device=0x99
+
 page_size=256
 max_page_count=32768
 max_read_byte=32768
+erase_unit_size=65536
 
 def printhexstring(data):
 	if data:
@@ -157,17 +159,22 @@ class q25q64fw():
 		
 		#print(f'head:{head} page:{page} tail:{tail}')
 		if head!=0:
+			self.block64k_erase(addr)
 			pagedata=data[:head]
-			data=data[head:]
 			self.page_program(addr,pagedata)
+			data=data[head:]
 			addr=addr+head
 		if page!=0:
 			for i in range(page):
+				if addr%erase_unit_size==0:
+					self.block64k_erase(addr)
 				pagedata=data[:page_size]
-				data=data[page_size:]
 				self.page_program(addr,pagedata)
+				data=data[page_size:]
 				addr=addr+page_size
 		if tail!=0:
+			if addr%erase_unit_size==0:
+				self.page_program(addr,pagedata)
 			pagedata=data[:tail]
 			self.page_program(addr,pagedata)
 		end_ticks = time.time()
@@ -184,7 +191,13 @@ class q25q64fw():
 			delay_ms(1)
 		end_ticks = time.time()
 		print('chip erase done: '+str(float('%.2f'%(end_ticks-start_ticks)))+'s')
-		
+
+	def block64k_erase(self,addr):
+		while self.device_busy():
+			delay_ms(1)
+		self.write_en()
+		return len(self.port.spireadreg([block64k_erase,addr>>16,(addr&0xff00)>>8,addr&0x00FF],0))
+				
 	def sector_erase(self,addr):
 		while self.device_busy():
 			delay_ms(1)
@@ -224,21 +237,17 @@ def main():
 			dut.chip_readbin(args.readbinlen)
 		if args.erase:
 			dut.chip_erase()
-		if args.program:
+		if args.program or args.verify:
 			binfile=args.file
 			if os.path.exists(binfile):
-				data=dut.readbinfile(binfile)
-				dut.chip_program(args.addr,data)
-				dut.chip_verify(args.addr)
+				if args.verify or args.program:
+					data=dut.readbinfile(binfile)
+				if args.program:
+					dut.chip_program(args.addr,data)
+				if args.verify:
+					dut.chip_verify(args.addr)
 			else:
-				print('No bin file!!!')
-		if args.verify:
-			binfile=args.file
-			if os.path.exists(binfile):			
-				data=dut.readbinfile(binfile)
-				dut.chip_verify(args.addr)
-			else:
-				print('No bin file!!!')
+				print('Bin file not found!!!')
 		dut.cleanup()	
 		
 if __name__ == "__main__":
